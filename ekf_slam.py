@@ -37,7 +37,7 @@ def ekf_slam(xEst, PEst, u, z):
     PEst = G.T @ PEst @ G + Fx.T @ Cx @ Fx
     initP = np.eye(2)
 
-    # Update
+    # Update ( correction )
     for iz in range(len(z[:, 0])):  # for each observation
         min_id = search_correspond_landmark_id(xEst, PEst, z[iz, 0:2])
 
@@ -227,7 +227,7 @@ def main():
         time += DT
         u = calc_input() # 선속도, 각속도
 
-        xTrue, z, xDR, ud = observation(xTrue, xDR, u, RFID) # xTrue : 실제 위치, xDR : Dead Reckoning, ud : 노이즈 추가된 입력값
+        xTrue, z, xDR, ud = observation(xTrue, xDR, u, RFID) # xTrue : 실제 위치, z : 각 랜드마크에 대한 거리와 각도, xDR : Dead Reckoning, ud : 노이즈 추가된 입력값
 
         xEst, PEst = ekf_slam(xEst, PEst, ud, z)
 
