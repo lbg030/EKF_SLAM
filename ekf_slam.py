@@ -33,7 +33,7 @@ show_animation = True
 def ekf_slam(xEst, PEst, u, z):
     # XEst: 상태 추정값, PEst: 상태 추정 공분산, u: 노이즈가 포함된 입력값, z: 관측된 landmark 위치(거리, 각도, 랜드마크 번호)
     
-    # Predict
+    # prediction step
     G, Fx = jacob_motion(xEst, u)
     xEst[0:STATE_SIZE] = motion_model(xEst[0:STATE_SIZE], u)
     PEst = G.T @ PEst @ G + Fx.T @ Cx @ Fx
@@ -106,17 +106,36 @@ def observation(xTrue, xd, u, RFID):
     return xTrue, z, xd, ud
 
 
-def motion_model(x, u):
+def motion_model(x, u): # -> 로봇이 직선으로만 움직이는 모델
+    v = u[0, 0]  # 선속도 (linear velocity)
+    omega = u[1, 0]  # 각속도 (angular velocity)
+    theta = x[2, 0]  # 로봇의 현재 방향 (yaw)
     F = np.array([[1.0, 0, 0],
                   [0, 1.0, 0],
                   [0, 0, 1.0]])
     
     # DT를 곱하는 이유는, 속도에 시간 간격을 반영하기 위함 1m/s일 때, 0.1초가 지났으면 0.1m만큼 이동하고 회전도 동일한 맥락
-    B = np.array([[DT * math.cos(x[2, 0]), 0], 
-                  [DT * math.sin(x[2, 0]), 0],
+    B = np.array([[DT * math.cos(theta), 0], 
+                  [DT * math.sin(theta), 0],
                   [0.0, DT]])
 
     x = (F @ x) + (B @ u)
+    
+    # 각속도가 0인 경우에는 직선 이동 (PDF)
+    # if abs(omega) > 1e-6:
+    #     x_next = x[0, 0] + (v / omega) * (math.sin(theta + omega * DT) - math.sin(theta))
+    #     y_next = x[1, 0] + (v / omega) * (math.cos(theta) - math.cos(theta + omega * DT))
+    #     theta_next = theta + omega * DT
+    # else:  # 각속도가 0일 때는 직선 이동
+    #     x_next = x[0, 0] + v * DT * math.cos(theta)
+    #     y_next = x[1, 0] + v * DT * math.sin(theta)
+    #     theta_next = theta  # 방향 변화 없음
+
+    # 새로운 상태 업데이트
+    # x[0, 0] = x_next
+    # x[1, 0] = y_next
+    # x[2, 0] = theta_next
+
     return x
 
 
@@ -126,16 +145,45 @@ def calc_n_lm(x):
 
 
 def jacob_motion(x, u):
+    # 상태벡터 X의 확장
+    # 로봇의 상태와 랜드마크 상태를 분리하는 역할
     Fx = np.hstack((np.eye(STATE_SIZE), np.zeros(
         (STATE_SIZE, LM_SIZE * calc_n_lm(x)))))
-
-    jF = np.array([[0.0, 0.0, -DT * u[0, 0] * math.sin(x[2, 0])],
-                   [0.0, 0.0, DT * u[0, 0] * math.cos(x[2, 0])],
+    # x[2, 0] = 세타
+    theta = x[2,0]
+    # u[0, 0] = 선속도 -> 즉 선속도만 고려하고 각속도는 고려하지 않음
+    # 기존의 선속도/각속도는 로봇이 곡선을 그리며 회전할 때, 회전 반지름을 나타냄.
+        # ex) 선속도 2m/s 각속도 1rad/s -> 회전 반지름 2m
+    jF = np.array([[0.0, 0.0, -DT * u[0, 0] * math.sin(theta)],
+                   [0.0, 0.0, DT * u[0, 0] * math.cos(theta)],
                    [0.0, 0.0, 0.0]], dtype=float)
 
+    # 단순히 I + jF가 아니라 Fx.T @ jF @ Fx 하는 이유는 ladnmark를 제외한 로봇의 상태부분만을 미분하기 위해 jF를 조정하기 위함
     G = np.eye(len(x)) + Fx.T @ jF @ Fx
+    
+    # v = u[0, 0]  # 선속도 (linear velocity)
+    # omega = u[1, 0]  # 각속도 (angular velocity)
+    # theta = x[2, 0]  # 로봇의 현재 방향 (yaw)
 
-    return G, Fx,
+    # # 각속도가 0이 아닌 경우: 일반적인 회전 운동에 대한 야코비안 계산
+    # if abs(omega) > 1e-6:
+    #     G = np.array([[1.0, 0.0, (v / omega) * (math.cos(theta + omega * DT) - math.cos(theta))],
+    #                   [0.0, 1.0, (v / omega) * (math.sin(theta + omega * DT) - math.sin(theta))],
+    #                   [0.0, 0.0, 1.0]])
+
+    # # 각속도가 0일 때: 직선 운동에 대한 야코비안 계산
+    # else:
+    #     G = np.array([[1.0, 0.0, -v * DT * math.sin(theta)],
+    #                   [0.0, 1.0, v * DT * math.cos(theta)],
+    #                   [0.0, 0.0, 1.0]])
+
+    # # Fx 행렬 (로봇 상태와 랜드마크 상태를 구분)
+    # Fx = np.hstack((np.eye(3), np.zeros((3, LM_SIZE * calc_n_lm(x)))))
+
+    # # 최종 G 행렬을 확장된 상태 벡터에 맞게 확장
+    # G = np.eye(len(x)) + Fx.T @ G @ Fx
+
+    return G, Fx
 
 
 def calc_landmark_position(x, z):
