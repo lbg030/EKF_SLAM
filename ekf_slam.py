@@ -21,7 +21,7 @@ Q_sim = np.diag([0.2, np.deg2rad(1.0)]) ** 2
 R_sim = np.diag([1.0, np.deg2rad(10.0)]) ** 2
 
 DT = 0.1  # time tick [s]
-SIM_TIME = 100.0  # simulation time [s]
+SIM_TIME = 1000.0  # simulation time [s]
 MAX_RANGE = 10.0  # maximum observation range
 M_DIST_TH = 2.0  # Threshold of Mahalanobis distance for data association.
 STATE_SIZE = 3  # State size [x,y,yaw]
@@ -31,6 +31,8 @@ show_animation = True
 
 
 def ekf_slam(xEst, PEst, u, z):
+    # XEst: 상태 추정값, PEst: 상태 추정 공분산, u: 노이즈가 포함된 입력값, z: 관측된 landmark 위치(거리, 각도, 랜드마크 번호)
+    
     # Predict
     G, Fx = jacob_motion(xEst, u)
     xEst[0:STATE_SIZE] = motion_model(xEst[0:STATE_SIZE], u)
@@ -41,7 +43,7 @@ def ekf_slam(xEst, PEst, u, z):
     for iz in range(len(z[:, 0])):  # for each observation
         min_id = search_correspond_landmark_id(xEst, PEst, z[iz, 0:2])
 
-        nLM = calc_n_lm(xEst)
+        nLM = calc_n_lm(xEst) # 현재까지 몇개의 landmark를 보았는지
         if min_id == nLM:
             print("New LM")
             # Extend state and covariance matrix
@@ -50,7 +52,13 @@ def ekf_slam(xEst, PEst, u, z):
                               np.hstack((np.zeros((LM_SIZE, len(xEst))), initP))))
             xEst = xAug
             PEst = PAug
+        
+        # 기존 랜드마크 업데이트 및 칼만 이득 계산
         lm = get_landmark_position_from_state(xEst, min_id)
+        # y: 관측된 값과 예상된 값 사이의 차이
+        # S: 공분산
+        # H: 관측 모델의 야코비안
+        
         y, S, H = calc_innovation(lm, xEst, PEst, z[iz, 0:2], min_id)
 
         K = (PEst @ H.T) @ np.linalg.inv(S)
@@ -70,16 +78,17 @@ def calc_input():
 
 
 def observation(xTrue, xd, u, RFID):
-    xTrue = motion_model(xTrue, u)
+    xTrue = motion_model(xTrue, u) # noise 없이 업데이트 하면 GT
 
     # add noise to gps x-y
-    z = np.zeros((0, 3))
+    # 로봇이 landmark를 관측한 정보를 저장할 배열
+    z = np.zeros((0, 3)) #  z = [d, theta, i] -> d : 거리, theta : 각도, i : 랜드마크 번호
 
     for i in range(len(RFID[:, 0])):
 
-        dx = RFID[i, 0] - xTrue[0, 0]
-        dy = RFID[i, 1] - xTrue[1, 0]
-        d = math.hypot(dx, dy)
+        dx = RFID[i, 0] - xTrue[0, 0] # 랜드마크와 x축 거리 계산
+        dy = RFID[i, 1] - xTrue[1, 0] # 랜드마크와 y축 거리 계산
+        d = math.hypot(dx, dy) # 유클리디안 거리
         angle = pi_2_pi(math.atan2(dy, dx) - xTrue[2, 0])
         if d <= MAX_RANGE:
             dn = d + np.random.randn() * Q_sim[0, 0] ** 0.5  # add noise
@@ -112,7 +121,7 @@ def motion_model(x, u):
 
 
 def calc_n_lm(x):
-    n = int((len(x) - STATE_SIZE) / LM_SIZE)
+    n = int((len(x) - STATE_SIZE) / LM_SIZE) # -> X_t = [x, y, yaw, lm1_x, lm1_y, lm2_x, lm2_y, ...] 이므로, 랜드마크의 개수는 (전체 길이 - 상태 길이) / 랜드마크 길이
     return n
 
 
@@ -252,7 +261,7 @@ def main():
             for i in range(calc_n_lm(xEst)):
                 plt.plot(xEst[STATE_SIZE + i * 2],
                          xEst[STATE_SIZE + i * 2 + 1], "xg")
-
+            # black : dead reckoning, blue: gt, red: estimation ( z 포함 )
             plt.plot(hxTrue[0, :],
                      hxTrue[1, :], "-b")
             plt.plot(hxDR[0, :],
@@ -261,6 +270,10 @@ def main():
                      hxEst[1, :], "-r")
             plt.axis("equal")
             plt.grid(True)
+                # 현재 time 시각화 추가
+            plt.text(0.05, 0.95, f'Time: {time:.2f} s', transform=plt.gca().transAxes, fontsize=12,
+                    verticalalignment='top', bbox=dict(facecolor='white', alpha=0.5))
+            
             plt.pause(0.001)
 
 
